@@ -1,14 +1,19 @@
 /* Scoped to the shadow root, so the page can't touch it and it can't touch the page.
    Fixed font-size so a host with a weird html{font-size} can't distort the panel. */
 .frimmy {
+	--accent: #1a73e8;
+	--accent-dark: #1558b8;
+	--danger: #b3261e;
+	--radius: 8px;
+	--gap: 8px;
 	position: fixed;
 	bottom: 16px;
 	right: 16px;
 	z-index: 2147483647;
-	width: 320px;
+	width: 380px;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: var(--gap);
 	padding: 12px;
 	font:
 		14px / 1.4 system-ui,
@@ -23,27 +28,49 @@
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
+	gap: var(--gap);
 	font-weight: 600;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #ccc;
 }
 .frimmy-target {
+	flex: 1;
 	font-weight: 400;
 	font-size: 11px;
 	color: #888;
-	max-width: 180px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.frimmy-pick {
+	border: 1px solid #ccc;
+	border-radius: var(--radius);
+	background: #fff;
+	padding: 4px 8px;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+.frimmy-pick:hover {
+	background: #f5f5f5;
 }
 .frimmy-log {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	max-height: 240px;
+	max-height: 380px;
+	min-height: 48px;
 	overflow-y: auto;
+}
+.frimmy-empty {
+	margin: auto;
+	color: #999;
+	font-size: 13px;
+	text-align: center;
 }
 .frimmy-msg {
 	padding: 6px 8px;
-	border-radius: 8px;
+	border-radius: var(--radius);
 	white-space: pre-wrap;
 	word-break: break-word;
 }
@@ -57,31 +84,77 @@
 }
 .frimmy-msg.error {
 	background: #fce8e6;
-	color: #b3261e;
+	color: var(--danger);
+}
+.frimmy-stale {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	border-radius: var(--radius);
+	background: #fef7e0;
+	color: #8a6d00;
+	font-size: 12px;
 }
 .frimmy-input {
 	resize: vertical;
 	min-height: 48px;
 	padding: 8px;
 	border: 1px solid #ccc;
-	border-radius: 8px;
+	border-radius: var(--radius);
 	font: inherit;
+}
+.frimmy-input:focus-visible {
+	outline: 2px solid var(--accent);
+	border-color: var(--accent);
 }
 .frimmy-actions {
 	display: flex;
-	gap: 8px;
+	gap: var(--gap);
 }
 .frimmy-actions button {
 	flex: 1;
 	padding: 8px;
-	border: 0;
-	border-radius: 8px;
-	background: #1a73e8;
-	color: #fff;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
 	font: inherit;
+	white-space: nowrap;
 	cursor: pointer;
+	transition:
+		background 0.12s,
+		opacity 0.12s;
+}
+.frimmy-actions button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+/* Primary action: solid. */
+.frimmy-primary {
+	background: var(--accent);
+	color: #fff;
+}
+.frimmy-primary:hover:not(:disabled) {
+	background: var(--accent-dark);
+}
+/* Secondary: outlined. */
+.frimmy-secondary {
+	background: #fff;
+	border-color: var(--accent) !important;
+	color: var(--accent);
+}
+.frimmy-secondary:hover:not(:disabled) {
+	background: #f0f5ff;
+}
+/* Destructive: quiet ghost, loud only on hover. */
+.frimmy-ghost {
+	background: transparent;
+	color: #666;
+}
+.frimmy-ghost:hover:not(:disabled) {
+	background: #fce8e6;
+	color: var(--danger);
 }
 .frimmy-actions button:disabled {
-	opacity: 0.5;
+	opacity: 0.45;
 	cursor: default;
 }

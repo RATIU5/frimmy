@@ -1,0 +1,11 @@
+packages:
+  - extension
+  - server
+allowBuilds:
+  esbuild: true
+  sharp: true
+  spawn-sync: true
+  workerd: true
+# pnpm reads its own override key, not package.json's "overrides".
+overrides:
+  "@vitejs/plugin-react": "4"

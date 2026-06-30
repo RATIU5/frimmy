@@ -45,6 +45,8 @@ export default function App({ host }: { host: string }) {
 		html: string;
 	} | null>(null);
 	const [busy, setBusy] = useState(false);
+	// Transient "Copied ✓" feedback on the Save button.
+	const [saved, setSaved] = useState(false);
 	// Per-element edits, keyed by selector. Persisted server-side per URL.
 	const [edits, setEdits] = useState<Record<string, string>>({});
 	// The shared-session id this panel is bound to. Set when loaded via ?frimmy=,
@@ -169,7 +171,15 @@ export default function App({ host }: { host: string }) {
 		setMessages((m) => [...m, { role: "user", text: prompt }]);
 		setInput("");
 		setBusy(true);
-		const context = `Target selector: ${selected.selector}\n\nElement HTML:\n${selected.html}`;
+		// Feed back any CSS already applied to this element so the AI builds on it
+		// (blue + monospace) instead of replacing it — its result overwrites the
+		// per-selector entry, so it must return the full, merged rule.
+		const prior = edits[selected.selector];
+		const context =
+			`Target selector: ${selected.selector}\n\nElement HTML:\n${selected.html}` +
+			(prior
+				? `\n\nCSS already applied to this element (modify/extend it, keep existing declarations unless the request changes them):\n${prior}`
+				: "");
 		const res = await browser.runtime.sendMessage({
 			type: "ai-edit",
 			prompt,
@@ -234,16 +244,25 @@ export default function App({ host }: { host: string }) {
 			id = res.id;
 			setSessionId(id); // bind so later saves update this same record.
 		}
+		const link = `${location.origin}?frimmy=${id}`;
+		// Copy the share link so users don't have to select it out of the chat.
+		try {
+			await navigator.clipboard.writeText(link);
+			setSaved(true);
+			setTimeout(() => setSaved(false), 2000);
+		} catch {
+			// Clipboard blocked (no focus / permissions) — link is still in the log.
+		}
 		setMessages((m) => [
 			...m,
-			{
-				role: "assistant",
-				text: `Saved. Share: ${location.origin}?frimmy=${id}`,
-			},
+			{ role: "assistant", text: `Saved. Share: ${link}` },
 		]);
 	}
 
 	function clear() {
+		// Destructive: also deletes the shared DB record. Confirm first.
+		// ponytail: native confirm — accessible and zero code; swap for a toast-undo if it annoys.
+		if (!confirm("Clear all edits on this page? This can't be undone.")) return;
 		// Wipe everything for this URL: in-memory state, the applied CSS, the
 		// per-URL working state, and the local auto-banner index.
 		setEdits({});
@@ -263,6 +282,12 @@ export default function App({ host }: { host: string }) {
 		}
 	}
 
+	// Edits whose selector matches nothing on the current page — the AI's CSS is
+	// silently doing nothing (page changed, or a shared edit for a different layout).
+	const staleSelectors = Object.keys(edits).filter(
+		(sel) => !sel.startsWith("shared:") && !document.querySelector(sel),
+	);
+
 	return (
 		<div className="frimmy">
 			<div className="frimmy-head">
@@ -278,7 +303,18 @@ export default function App({ host }: { host: string }) {
 					Select element
 				</button>
 			</div>
+			{staleSelectors.length > 0 && (
+				<div className="frimmy-stale">
+					⚠ {staleSelectors.length} edit
+					{staleSelectors.length > 1 ? "s" : ""} match nothing on this page.
+				</div>
+			)}
 			<div className="frimmy-log">
+				{messages.length === 0 && !busy && (
+					<div className="frimmy-empty">
+						Pick an element, then describe a change.
+					</div>
+				)}
 				{messages.map((m, i) => (
 					<div
 						key={i}
@@ -304,13 +340,26 @@ export default function App({ host }: { host: string }) {
 				}}
 			/>
 			<div className="frimmy-actions">
-				<button onClick={send} disabled={busy}>
+				<button
+					className="frimmy-primary"
+					onClick={send}
+					disabled={busy || !input.trim() || !selected}
+					title={!selected ? "Pick an element first" : undefined}
+				>
 					Generate
 				</button>
-				<button onClick={save} disabled={busy}>
-					Save & Share
+				<button
+					className="frimmy-secondary"
+					onClick={save}
+					disabled={busy || !Object.keys(edits).length}
+				>
+					{saved ? "Copied ✓" : "Save & Share"}
 				</button>
-				<button onClick={clear} disabled={busy}>
+				<button
+					className="frimmy-ghost"
+					onClick={clear}
+					disabled={busy || (!messages.length && !Object.keys(edits).length)}
+				>
 					Clear
 				</button>
 			</div>
