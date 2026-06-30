@@ -68,6 +68,8 @@ export default function App({ host }: { host: string }) {
 		html: string;
 	} | null>(null);
 	const [busy, setBusy] = useState(false);
+	// Close hides the panel + stops the picker; the icon reopens it (activate-picker).
+	const [closed, setClosed] = useState(false);
 	// Transient "Copied ✓" feedback on the Save button.
 	const [saved, setSaved] = useState(false);
 	// Per-element edits, keyed by selector. Persisted server-side per URL.
@@ -126,7 +128,13 @@ export default function App({ host }: { host: string }) {
 			}
 
 			// Greeting is always the first message; drop any persisted copy to avoid dupes.
-			setMessages([GREETING, ...msgs.filter((m) => m.text !== GREETING.text)]);
+			// Surface auth/config errors on open rather than failing silently at send.
+			const errMsg: Msg[] = s?.error ? [{ role: "error", text: s.error }] : [];
+			setMessages([
+				GREETING,
+				...msgs.filter((m) => m.text !== GREETING.text),
+				...errMsg,
+			]);
 			setEdits(eds);
 			loaded.current = true;
 		})();
@@ -179,7 +187,10 @@ export default function App({ host }: { host: string }) {
 		picker.startPicking(); // auto-activate on first inject
 
 		const onMsg = (m: any) => {
-			if (m?.type === "activate-picker") picker.startPicking();
+			if (m?.type === "activate-picker") {
+				setClosed(false);
+				picker.startPicking();
+			}
 		};
 		browser.runtime.onMessage.addListener(onMsg);
 		return () => {
@@ -322,6 +333,8 @@ export default function App({ host }: { host: string }) {
 		(sel) => !sel.startsWith("shared:") && !document.querySelector(sel),
 	);
 
+	if (closed) return null;
+
 	return (
 		<div className="frimmy">
 			<div className="frimmy-head">
@@ -335,6 +348,16 @@ export default function App({ host }: { host: string }) {
 					title="Pick a new element"
 				>
 					Select element
+				</button>
+				<button
+					className="frimmy-close"
+					onClick={() => {
+						pickerRef.current?.stopPicking();
+						setClosed(true);
+					}}
+					title="Close (reopen with the extension icon)"
+				>
+					✕
 				</button>
 			</div>
 			{staleSelectors.length > 0 && (
