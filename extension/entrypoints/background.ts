@@ -18,16 +18,16 @@ async function accessToken(): Promise<string | undefined> {
 
 class AuthRequired extends Error {}
 
-async function api(path: string, body: unknown) {
+async function api(path: string, body?: unknown, method = 'POST') {
   const token = await accessToken();
   if (!token) {
     await browser.tabs.create({ url: API }); // Access intercepts -> login
     throw new AuthRequired('Sign in to Cloudflare Access (a tab was opened), then try again.');
   }
   const res = await fetch(`${API}${path}`, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': token },
-    body: JSON.stringify(body),
+    body: method === 'GET' ? undefined : JSON.stringify(body),
   });
   if (res.status === 401 || res.status === 403) {
     await browser.tabs.create({ url: API });
@@ -37,6 +37,7 @@ async function api(path: string, body: unknown) {
     throw new Error(
       (await res.json().catch(() => null))?.error?.message ?? `HTTP ${res.status}`,
     );
+  if (res.status === 204) return null; // No Content (e.g. DELETE)
   return res.json();
 }
 
@@ -46,28 +47,88 @@ function handle(promise: Promise<unknown>, sendResponse: (r: unknown) => void) {
     .catch((e) => sendResponse({ error: String(e.message ?? e), authRequired: e instanceof AuthRequired }));
 }
 
+// Inject the panel; if it's already there, just (re)activate the picker.
+async function injectPanel(tabId: number) {
+  try {
+    await browser.tabs.sendMessage(tabId, { type: 'activate-picker' });
+  } catch {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      files: ['/content-scripts/content.js'],
+    });
+  }
+}
+
+// Local index of URLs we've saved edits for, so the lightweight auto script can
+// check "any edits here?" with zero network and no auth.
+const URLS_KEY = 'frimmy-urls';
+async function getUrls(): Promise<string[]> {
+  const res = await browser.storage.local.get(URLS_KEY);
+  return (res[URLS_KEY] as string[] | undefined) ?? [];
+}
+async function recordUrl(url: string) {
+  const urls = await getUrls();
+  if (!urls.includes(url))
+    await browser.storage.local.set({ [URLS_KEY]: [...urls, url] });
+}
+
 export default defineBackground(() => {
-  browser.action.onClicked.addListener(async (tab) => {
-    if (!tab.id) return;
-    try {
-      await browser.tabs.sendMessage(tab.id, { type: 'activate-picker' });
-    } catch {
-      // No receiver -> inject. WXT outputs the content script here; it self-activates.
-      await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['/content-scripts/content.js'],
-      });
-    }
+  browser.action.onClicked.addListener((tab) => {
+    if (tab.id) injectPanel(tab.id);
   });
 
-  browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === 'has-edits') {
+      getUrls().then((urls) => sendResponse({ has: urls.includes(msg.url) }));
+      return true;
+    }
+    if (msg?.type === 'inject-frimmy') {
+      if (sender.tab?.id) injectPanel(sender.tab.id);
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg?.type === 'ai-edit') {
-      handle(api('/ai/edit', { prompt: msg.prompt, context: msg.context }), sendResponse);
+      handle(api('/ai/edit', { prompt: msg.prompt, context: msg.context, selector: msg.selector }), sendResponse);
       return true; // async response
+    }
+    if (msg?.type === 'get-edit') {
+      handle(api(`/edits/${encodeURIComponent(msg.id)}`, undefined, 'GET'), sendResponse);
+      return true;
+    }
+    if (msg?.type === 'load-state') {
+      handle(api(`/state?url=${encodeURIComponent(msg.url)}`, undefined, 'GET'), sendResponse);
+      return true;
+    }
+    if (msg?.type === 'clear-state') {
+      getUrls().then((urls) =>
+        browser.storage.local.set({ [URLS_KEY]: urls.filter((u) => u !== msg.url) }),
+      );
+      handle(api(`/state?url=${encodeURIComponent(msg.url)}`, undefined, 'DELETE'), sendResponse);
+      return true;
+    }
+    if (msg?.type === 'save-state') {
+      recordUrl(msg.url);
+      handle(api('/state', { url: msg.url, state: msg.state }, 'PUT'), sendResponse);
+      return true;
     }
     if (msg?.type === 'save-edit') {
       handle(
         api('/edits', { diff: msg.diff, target_url: msg.target_url, title: msg.title }),
+        sendResponse,
+      );
+      return true;
+    }
+    if (msg?.type === 'delete-edit') {
+      handle(api(`/edits/${encodeURIComponent(msg.id)}`, undefined, 'DELETE'), sendResponse);
+      return true;
+    }
+    if (msg?.type === 'update-edit') {
+      handle(
+        api(
+          `/edits/${encodeURIComponent(msg.id)}`,
+          { diff: msg.diff, target_url: msg.target_url, title: msg.title },
+          'PUT',
+        ),
         sendResponse,
       );
       return true;
