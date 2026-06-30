@@ -1,0 +1,46 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "server",
+	"compatibility_date": "2025-08-03",
+	"main": "./src/index.tsx",
+	"observability": {
+		"enabled": true
+	},
+	// Run these once, then paste the printed ids below:
+	//   wrangler d1 create frimmy
+	//   wrangler kv namespace create DIFFS
+	"d1_databases": [
+		{
+			"binding": "frimmy",
+			"database_name": "frimmy",
+			"database_id": "a01294a0-d77f-4be7-b59d-2aaf40335333",
+			"migrations_dir": "migrations"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "DIFFS",
+			"id": "058b42a3c8dc42cdb1940d5362cd31fa"
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"ratelimits": [
+		{
+			"name": "RL",
+			"namespace_id": "1",
+			"simple": {
+				"limit": 20,
+				"period": 60
+			}
+		}
+	],
+	// Cloudflare Access (auth): set after creating the Access app.
+	// ACCESS_TEAM_DOMAIN -> https://<team>.cloudflareaccess.com
+	// ACCESS_AUD         -> the Application Audience (AUD) tag
+	"vars": {
+		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_AUD": ""
+	}
+}
