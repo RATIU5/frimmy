@@ -71,8 +71,6 @@ async function authenticate(req: Request, env: CloudflareBindings): Promise<Vars
 	}
 	if (!ident) throw new HttpError(401, "no identity in token");
 
-	// ponytail: dev-only — prints the token identity so you know what to allowlist. Remove before prod.
-	console.log("frimmy identity:", ident, "| allowed:", env.ALLOWED_EMAILS);
 	if (
 		!(env.ALLOWED_EMAILS ?? "")
 			.split(",")
@@ -155,9 +153,10 @@ async function aiEdit(c: Req) {
 	}
 	const raw = (out as { declarations?: unknown })?.declarations;
 	if (typeof raw !== "string") throw new HttpError(502, "AI returned no css");
-	// Belt-and-braces: if the model ignored instructions and wrapped its own
-	// `sel { ... }`, keep just the inner block so the wrap below stays valid.
-	const declarations = raw.match(/\{([^}]*)\}/)?.[1] ?? raw;
+	// If the model wrapped its own `sel { ... }`, keep just the inner block; then
+	// strip ALL braces so the declarations can't break out of the rule we wrap
+	// them in (a `}` in the body would otherwise inject arbitrary new rules).
+	const declarations = (raw.match(/\{([^}]*)\}/)?.[1] ?? raw).replace(/[{}]/g, "");
 	// Wrap with the caller's selector -> always a valid, applicable rule.
 	const css = `${selector} { ${declarations.trim()} }`;
 	return json({ css });

@@ -1,6 +1,6 @@
 # Frimmy
 
-<video src='/assets/demo.mov' width=180/>
+<video src='/assets/demo.mov' width="320" height="240" controls />
 
 > [!NOTE]
 > This project was created within ~6 hours from idea to working prototype as a test to see how fast I can get a project up and running, with the assistance of AI (Claude Code). All chat history has been recorded.
