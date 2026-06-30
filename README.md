@@ -63,4 +63,4 @@ After 6 hours, I will submit a PR with all my work. After that I will make updat
 ## Progress
 
 - [19:30 MT 2026-06-29] Start project, initialize WXT project template, write markdown files
--
+- [21:45 MT 2026-06-29] Setup basic server and setup cloudflare project & workers
