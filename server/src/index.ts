@@ -1,13 +1,45 @@
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { HTTPException } from "hono/http-exception";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+// Plain Cloudflare Workers — no router framework. A small route table of
+// {method, URLPattern, handler}; the fetch handler runs CORS + Access auth, then
+// dispatches. HttpError carries the status; the top-level catch renders it as JSON.
 
 type Vars = { userId: string; email: string };
-const app = new Hono<{ Bindings: CloudflareBindings; Variables: Vars }>();
+type Ctx = ExecutionContext;
+// Per-request context: the parsed URL, path params, and the authed identity.
+type Req = {
+	req: Request;
+	env: CloudflareBindings;
+	url: URL;
+	params: Record<string, string>;
+	vars: Vars;
+};
+
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+class HttpError extends Error {
+	constructor(
+		public status: number,
+		message: string,
+	) {
+		super(message);
+	}
+}
+
+const json = (data: unknown, status = 200) =>
+	new Response(JSON.stringify(data), {
+		status,
+		headers: { "content-type": "application/json" },
+	});
 
 // header auth (not cookies) -> permissive CORS is safe; extension sends its own origin.
-app.use("*", cors());
+const CORS = {
+	"access-control-allow-origin": "*",
+	"access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+	"access-control-allow-headers": "*",
+};
+const withCors = (res: Response) => {
+	for (const [k, v] of Object.entries(CORS)) res.headers.set(k, v);
+	return res;
+};
 
 // --- Auth: verify the Cf-Access-Jwt-Assertion header against the team JWKS. ---
 // JWKS is cached per-isolate by jose. Built lazily so a missing env var fails per-request, not at startup.
@@ -18,68 +50,63 @@ function getJwks(domain: string) {
 	return jwks;
 }
 
-app.use("*", async (c, next) => {
-	const token = c.req.header("Cf-Access-Jwt-Assertion");
-	if (!token) throw new HTTPException(401, { message: "missing Access token" });
+async function authenticate(req: Request, env: CloudflareBindings): Promise<Vars> {
+	const token = req.headers.get("Cf-Access-Jwt-Assertion");
+	if (!token) throw new HttpError(401, "missing Access token");
+	let ident: string | undefined;
 	try {
-		const { payload } = await jwtVerify(
-			token,
-			getJwks(c.env.ACCESS_TEAM_DOMAIN),
-			{
-				issuer: c.env.ACCESS_TEAM_DOMAIN,
-				audience: c.env.ACCESS_AUD,
-			},
-		);
+		const { payload } = await jwtVerify(token, getJwks(env.ACCESS_TEAM_DOMAIN), {
+			issuer: env.ACCESS_TEAM_DOMAIN,
+			audience: env.ACCESS_AUD,
+		});
 		// Logins carry `email`; Access service tokens (the extension client)
 		// carry `common_name` and an empty `sub` instead — use whichever exists as
 		// both the identity and the allowlist key, else the service token is locked out.
-		const ident = (payload.email ?? payload.common_name ?? payload.sub) as
+		ident = (payload.email ?? payload.common_name ?? payload.sub) as
 			| string
 			| undefined;
-		if (!ident)
-			throw new HTTPException(401, { message: "no identity in token" });
-		c.set("userId", ident);
-		c.set("email", ident);
 	} catch (e) {
-		if (e instanceof HTTPException) throw e;
-		throw new HTTPException(401, { message: "invalid Access token" });
+		if (e instanceof HttpError) throw e;
+		throw new HttpError(401, "invalid Access token");
 	}
+	if (!ident) throw new HttpError(401, "no identity in token");
+
 	// ponytail: dev-only — prints the token identity so you know what to allowlist. Remove before prod.
-	console.log("frimmy identity:", c.get("email"), "| allowed:", c.env.ALLOWED_EMAILS);
+	console.log("frimmy identity:", ident, "| allowed:", env.ALLOWED_EMAILS);
 	if (
-		!(c.env.ALLOWED_EMAILS ?? "")
+		!(env.ALLOWED_EMAILS ?? "")
 			.split(",")
 			.map((e) => e.trim())
 			.filter(Boolean)
-			.includes(c.get("email"))
+			.includes(ident)
 	)
-		throw new HTTPException(403, { message: "forbidden" });
+		throw new HttpError(403, "forbidden");
 	// upsert the user row so edits.owner_id FK always resolves.
-	await c.env.frimmy
+	await env.frimmy
 		.prepare(
 			"INSERT INTO users (id, email, created_at) VALUES (?, ?, unixepoch()) ON CONFLICT(id) DO NOTHING",
 		)
-		.bind(c.get("userId"), c.get("email"))
+		.bind(ident, ident)
 		.run();
-	await next();
-});
+	return { userId: ident, email: ident };
+}
 
-app.get("/auth/me", (c) =>
-	c.json({ id: c.get("userId"), email: c.get("email") }),
-);
+// --- Handlers ---
+
+const me = (c: Req) => json({ id: c.vars.userId, email: c.vars.email });
 
 // --- AI: NL prompt + page context -> CSS-override diff. Rate-limited per user. ---
-app.post("/ai/edit", async (c) => {
-	const { success } = await c.env.RL.limit({ key: c.get("userId") });
-	if (!success) throw new HTTPException(429, { message: "rate limited" });
+async function aiEdit(c: Req) {
+	const { success } = await c.env.RL.limit({ key: c.vars.userId });
+	if (!success) throw new HttpError(429, "rate limited");
 
 	const { prompt, context, selector } = await c.req.json<{
 		prompt?: string;
 		context?: string;
 		selector?: string;
 	}>();
-	if (!prompt) throw new HTTPException(400, { message: "prompt required" });
-	if (!selector) throw new HTTPException(400, { message: "selector required" });
+	if (!prompt) throw new HttpError(400, "prompt required");
+	if (!selector) throw new HttpError(400, "selector required");
 
 	let r: { response: unknown };
 	try {
@@ -114,65 +141,60 @@ app.post("/ai/edit", async (c) => {
 			},
 		})) as { response: unknown };
 	} catch {
-		throw new HTTPException(502, { message: "AI generation failed" });
+		throw new HttpError(502, "AI generation failed");
 	}
 
 	// JSON mode returns `response` as object or (per-model) a JSON string. Normalize.
-	let out = (r as { response: unknown }).response;
+	let out = r.response;
 	if (typeof out === "string") {
 		try {
 			out = JSON.parse(out);
 		} catch {
-			throw new HTTPException(502, { message: "AI returned malformed output" });
+			throw new HttpError(502, "AI returned malformed output");
 		}
 	}
 	const raw = (out as { declarations?: unknown })?.declarations;
-	if (typeof raw !== "string")
-		throw new HTTPException(502, { message: "AI returned no css" });
+	if (typeof raw !== "string") throw new HttpError(502, "AI returned no css");
 	// Belt-and-braces: if the model ignored instructions and wrapped its own
 	// `sel { ... }`, keep just the inner block so the wrap below stays valid.
 	const declarations = raw.match(/\{([^}]*)\}/)?.[1] ?? raw;
 	// Wrap with the caller's selector -> always a valid, applicable rule.
 	const css = `${selector} { ${declarations.trim()} }`;
-	return c.json({ css });
-});
+	return json({ css });
+}
 
 // --- Working state: per-user, per-URL chat+edits history in KV. This is the
 // live panel state (auto-saved on each edit); D1/KV `edits` below are explicit
 // Save & Share snapshots. Keyed by userId so it's private. ---
-app.put("/state", async (c) => {
+async function putState(c: Req) {
 	const { url, state } = await c.req.json<{ url?: string; state?: unknown }>();
-	if (!url) throw new HTTPException(400, { message: "url required" });
-	await c.env.DIFFS.put(
-		`state:${c.get("userId")}:${url}`,
-		JSON.stringify(state ?? {}),
-	);
-	return c.json({ ok: true });
-});
+	if (!url) throw new HttpError(400, "url required");
+	await c.env.DIFFS.put(`state:${c.vars.userId}:${url}`, JSON.stringify(state ?? {}));
+	return json({ ok: true });
+}
 
-app.get("/state", async (c) => {
-	const url = c.req.query("url");
-	if (!url) throw new HTTPException(400, { message: "url required" });
-	const raw = await c.env.DIFFS.get(`state:${c.get("userId")}:${url}`);
-	return c.json(raw ? JSON.parse(raw) : {});
-});
+async function getState(c: Req) {
+	const url = c.url.searchParams.get("url");
+	if (!url) throw new HttpError(400, "url required");
+	const raw = await c.env.DIFFS.get(`state:${c.vars.userId}:${url}`);
+	return json(raw ? JSON.parse(raw) : {});
+}
 
-app.delete("/state", async (c) => {
-	const url = c.req.query("url");
-	if (!url) throw new HTTPException(400, { message: "url required" });
-	await c.env.DIFFS.delete(`state:${c.get("userId")}:${url}`);
-	return c.body(null, 204);
-});
+async function deleteState(c: Req) {
+	const url = c.url.searchParams.get("url");
+	if (!url) throw new HttpError(400, "url required");
+	await c.env.DIFFS.delete(`state:${c.vars.userId}:${url}`);
+	return new Response(null, { status: 204 });
+}
 
 // --- Edits: KV blob (write first), D1 metadata (commit point). ---
-app.post("/edits", async (c) => {
+async function createEdit(c: Req) {
 	const { diff, target_url, title } = await c.req.json<{
 		diff?: string;
 		target_url?: string;
 		title?: string;
 	}>();
-	if (!diff || !target_url)
-		throw new HTTPException(400, { message: "diff and target_url required" });
+	if (!diff || !target_url) throw new HttpError(400, "diff and target_url required");
 
 	const id = crypto.randomUUID();
 	await c.env.DIFFS.put(`diff:${id}`, diff); // KV first: orphan blob is harmless, missing blob is not.
@@ -180,23 +202,23 @@ app.post("/edits", async (c) => {
 		.prepare(
 			"INSERT INTO edits (id, owner_id, target_url, title, created_at) VALUES (?, ?, ?, ?, unixepoch())",
 		)
-		.bind(id, c.get("userId"), target_url, title ?? null)
+		.bind(id, c.vars.userId, target_url, title ?? null)
 		.run();
-	return c.json({ id }, 201);
-});
+	return json({ id }, 201);
+}
 
-app.get("/edits", async (c) => {
+async function listEdits(c: Req) {
 	const { results } = await c.env.frimmy
 		.prepare(
 			"SELECT id, target_url, title, created_at FROM edits WHERE owner_id = ? ORDER BY created_at DESC",
 		)
-		.bind(c.get("userId"))
+		.bind(c.vars.userId)
 		.all();
-	return c.json(results);
-});
+	return json(results);
+}
 
-app.get("/edits/:id", async (c) => {
-	const id = c.req.param("id");
+async function getEdit(c: Req) {
+	const id = c.params.id;
 	// auth-gated viewing: any authed user can read a shared id (spec defers ownership ACL).
 	const row = await c.env.frimmy
 		.prepare(
@@ -204,13 +226,13 @@ app.get("/edits/:id", async (c) => {
 		)
 		.bind(id)
 		.first();
-	if (!row) throw new HTTPException(404, { message: "not found" });
+	if (!row) throw new HttpError(404, "not found");
 	const diff = await c.env.DIFFS.get(`diff:${id}`);
-	return c.json({ ...row, diff });
-});
+	return json({ ...row, diff });
+}
 
-app.put("/edits/:id", async (c) => {
-	const id = c.req.param("id");
+async function updateEdit(c: Req) {
+	const id = c.params.id;
 	const { diff, target_url, title } = await c.req.json<{
 		diff?: string;
 		target_url?: string;
@@ -218,9 +240,9 @@ app.put("/edits/:id", async (c) => {
 	}>();
 	const owned = await c.env.frimmy
 		.prepare("SELECT 1 FROM edits WHERE id = ? AND owner_id = ?")
-		.bind(id, c.get("userId"))
+		.bind(id, c.vars.userId)
 		.first();
-	if (!owned) throw new HTTPException(404, { message: "not found" });
+	if (!owned) throw new HttpError(404, "not found");
 
 	if (diff !== undefined) await c.env.DIFFS.put(`diff:${id}`, diff);
 	if (target_url !== undefined || title !== undefined)
@@ -230,25 +252,62 @@ app.put("/edits/:id", async (c) => {
 			)
 			.bind(target_url ?? null, title ?? null, id)
 			.run();
-	return c.json({ id });
-});
+	return json({ id });
+}
 
-app.delete("/edits/:id", async (c) => {
-	const id = c.req.param("id");
+async function deleteEdit(c: Req) {
+	const id = c.params.id;
 	const res = await c.env.frimmy
 		.prepare("DELETE FROM edits WHERE id = ? AND owner_id = ?")
-		.bind(id, c.get("userId"))
+		.bind(id, c.vars.userId)
 		.run();
-	if (!res.meta.changes) throw new HTTPException(404, { message: "not found" });
+	if (!res.meta.changes) throw new HttpError(404, "not found");
 	await c.env.DIFFS.delete(`diff:${id}`);
-	return c.body(null, 204);
-});
+	return new Response(null, { status: 204 });
+}
 
-app.onError((err, c) => {
-	if (err instanceof HTTPException)
-		return c.json({ error: { message: err.message } }, err.status);
-	console.error(err);
-	return c.json({ error: { message: "internal error" } }, 500);
-});
+// --- Route table. URLPattern handles the `:id` params natively. ---
+const routes: {
+	method: string;
+	pattern: URLPattern;
+	handler: (c: Req) => Response | Promise<Response>;
+}[] = [
+	["GET", "/auth/me", me],
+	["POST", "/ai/edit", aiEdit],
+	["PUT", "/state", putState],
+	["GET", "/state", getState],
+	["DELETE", "/state", deleteState],
+	["POST", "/edits", createEdit],
+	["GET", "/edits", listEdits],
+	["GET", "/edits/:id", getEdit],
+	["PUT", "/edits/:id", updateEdit],
+	["DELETE", "/edits/:id", deleteEdit],
+].map(([method, path, handler]) => ({
+	method: method as string,
+	pattern: new URLPattern({ pathname: path as string }),
+	handler: handler as (c: Req) => Response | Promise<Response>,
+}));
 
-export default app;
+export default {
+	async fetch(req: Request, env: CloudflareBindings, _ctx: Ctx): Promise<Response> {
+		if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
+		const url = new URL(req.url);
+		try {
+			const vars = await authenticate(req, env);
+			for (const r of routes) {
+				if (r.method !== req.method) continue;
+				const m = r.pattern.exec(url);
+				if (!m) continue;
+				return withCors(
+					await r.handler({ req, env, url, params: m.pathname.groups as Record<string, string>, vars }),
+				);
+			}
+			return withCors(json({ error: { message: "not found" } }, 404));
+		} catch (err) {
+			if (err instanceof HttpError)
+				return withCors(json({ error: { message: err.message } }, err.status));
+			console.error(err);
+			return withCors(json({ error: { message: "internal error" } }, 500));
+		}
+	},
+};

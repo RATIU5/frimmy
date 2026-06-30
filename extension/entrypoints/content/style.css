@@ -59,7 +59,7 @@
 	flex-direction: column;
 	gap: 6px;
 	max-height: 380px;
-	min-height: 48px;
+	min-height: 160px;
 	overflow-y: auto;
 }
 .frimmy-empty {

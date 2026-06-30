@@ -23,6 +23,24 @@ function cssPath(el: Element): string {
 	return parts.join(" > ");
 }
 
+// Merge two `selector { ... }` rules, new declarations winning per-property, so a
+// follow-up edit adds to the element instead of replacing it. ponytail: regex split
+// is fine for the flat declaration blocks the AI returns (no nested {}/@rules).
+function mergeRule(selector: string, prior: string | undefined, next: string): string {
+	const decls = new Map<string, string>();
+	for (const rule of [prior ?? "", next]) {
+		const body = rule.match(/\{([^}]*)\}/)?.[1] ?? rule;
+		for (const part of body.split(";")) {
+			const i = part.indexOf(":");
+			if (i === -1) continue;
+			const prop = part.slice(0, i).trim();
+			if (prop) decls.set(prop, part.slice(i + 1).trim());
+		}
+	}
+	const joined = [...decls].map(([p, v]) => `${p}: ${v};`).join(" ");
+	return `${selector} { ${joined} }`;
+}
+
 // One <style> in the page's light DOM carries every applied edit; replacing its
 // text re-applies. The panel's own styles live in the shadow root, untouched.
 function applyCss(css: string) {
@@ -53,6 +71,15 @@ export default function App({ host }: { host: string }) {
 	// or after the first Save. Subsequent saves update this same record.
 	const [sessionId, setSessionId] = useState<string | null>(null);
 	const pickerRef = useRef<ElementPicker | null>(null);
+	const logRef = useRef<HTMLDivElement | null>(null);
+	// Auto-scroll the chat to the bottom on new messages, unless the user has
+	// scrolled up to read history (within 40px of the bottom counts as "at bottom").
+	useEffect(() => {
+		const el = logRef.current;
+		if (!el) return;
+		if (el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+			el.scrollTop = el.scrollHeight;
+	}, [messages, busy]);
 	// Don't persist until the initial server load lands, or we'd overwrite saved
 	// state with the empty defaults above.
 	const loaded = useRef(false);
@@ -196,11 +223,12 @@ export default function App({ host }: { host: string }) {
 			setInput(prompt);
 			return;
 		}
-		setEdits((e) => ({ ...e, [selected.selector]: res.css }));
-		console.log("[frimmy] applied CSS:", res.css); // also in the page console
+		const merged = mergeRule(selected.selector, prior, res.css);
+		setEdits((e) => ({ ...e, [selected.selector]: merged }));
+		console.log("[frimmy] applied CSS:", merged); // also in the page console
 		setMessages((m) => [
 			...m,
-			{ role: "assistant", text: res.css, css: res.css },
+			{ role: "assistant", text: merged, css: merged },
 		]);
 	}
 
@@ -309,10 +337,10 @@ export default function App({ host }: { host: string }) {
 					{staleSelectors.length > 1 ? "s" : ""} match nothing on this page.
 				</div>
 			)}
-			<div className="frimmy-log">
+			<div className="frimmy-log" ref={logRef}>
 				{messages.length === 0 && !busy && (
-					<div className="frimmy-empty">
-						Pick an element, then describe a change.
+					<div className="frimmy-msg assistant">
+						Hey, I'm Frimmy! Select an element and describe your changes.
 					</div>
 				)}
 				{messages.map((m, i) => (
