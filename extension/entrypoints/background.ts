@@ -18,10 +18,23 @@ async function accessToken(): Promise<string | undefined> {
 
 class AuthRequired extends Error {}
 
+// One login tab at a time. Concurrent calls failing auth (e.g. load-state on
+// mount + a chat submit) would each open a tab; gate so only the first does,
+// for a short window. ponytail: time guard, not tracking the actual tab.
+let lastAuthTab = 0;
+async function openLogin() {
+  const now = Date.now();
+  if (now - lastAuthTab < 10000) return; // a login tab was just opened
+  lastAuthTab = now;
+  await browser.tabs.create({ url: API });
+}
+
 async function api(path: string, body?: unknown, method = 'POST') {
+  if (!API)
+    throw new Error('Extension not configured: WXT_API_URL is unset. Set it in .env and rebuild.');
   const token = await accessToken();
   if (!token) {
-    await browser.tabs.create({ url: API }); // Access intercepts -> login
+    await openLogin(); // Access intercepts -> login
     throw new AuthRequired('Sign in to Cloudflare Access (a tab was opened), then try again.');
   }
   const res = await fetch(`${API}${path}`, {
@@ -30,7 +43,7 @@ async function api(path: string, body?: unknown, method = 'POST') {
     body: method === 'GET' ? undefined : JSON.stringify(body),
   });
   if (res.status === 401 || res.status === 403) {
-    await browser.tabs.create({ url: API });
+    await openLogin();
     throw new AuthRequired('Session expired — sign in again in the opened tab, then try again.');
   }
   if (!res.ok)

@@ -1,0 +1,245 @@
+ ▐▛███▜▌   Claude Code v2.1.197
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/Developer/frimmy/server
+
+
+ ▎ Meet Sonnet 5, smarter and more efficient for everyday work. Switch anytime with /model.
+
+❯ What do I need to do to harden the security on this server and on the         
+  cloudflare server from abuse and ai scrapers?                                 
+
+⏺ Let me look at what this server actually is before prescribing anything.
+
+  Listed 1 directory (ctrl+o to expand)
+
+⏺ Bash(cd server && ls -la && echo "---" && cat wrangler.* 2>/dev/null && echo
+      "---PKG---" && cat package.json)
+  ⎿  chpwd:1: no such file or directory:
+     ---
+     {
+     … +70 lines (ctrl+o to expand)
+
+⏺ Bash(cd server && ls src && echo "---" && wc -l src/*.ts)
+  ⎿  Error: Exit code 1
+     (eval):cd:1: no such file or directory: server
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+⏺ Good news first: this server is already hard to abuse. Every route runs
+  through authenticate() — a Cloudflare Access JWT verified against your team
+  JWKS plus an email allowlist. No valid token for an allowlisted identity →
+  nothing past line 295 executes. AI scrapers can't even reach /ai/edit. So
+  "harden against scrapers" is ~90% already done by Access. The real gaps are
+  narrow:
+
+  Server (the Worker) — what's actually missing
+
+  1. No request body size limit. c.req.json() on /ai/edit (context), /state,
+  /edits will buffer whatever an allowlisted-but-misbehaving client sends. One
+  line:
+
+  const MAX_BODY = 64 * 1024; // ponytail: blanket cap; raise per-route if a 
+  real payload needs it
+  const len = +(c.req.headers.get("content-length") ?? 0);
+  if (len > MAX_BODY) throw new HttpError(413, "payload too large");
+
+  2. The AI prompt-injection "defense" is theater. Lines 127-129 add a trailing
+  system message telling the model to ignore malicious instructions — that
+  doesn't reliably stop injection. But it doesn't need to: the brace-stripping
+  on line 159 + selector-wrapping on 161 is the real containment. The output is
+  forced to be CSS declarations inside a caller-fixed selector. Keep line 159, 
+  drop the false-comfort prompt or keep it, doesn't matter — the structural
+  defense is what holds. Worth a comment that the brace strip is the actual
+  boundary, not the prompt.
+
+  3. Rate limit only covers /ai/edit. That's the expensive endpoint, so fine.
+  But /state and /edits writes are unbounded per user → a buggy/malicious
+  allowlisted client can fill KV/D1. If you care, move RL.limit up into
+  authenticate (global per-user budget). Probably YAGNI for an allowlisted user
+  base — skip until you have more than friends on the list.
+
+  Cloudflare side — where scraper/abuse hardening actually lives
+
+  The Worker can't protect itself from volume; the edge does. In the dashboard:
+
+  1. Confirm Access is enforced at the zone, not just in-app. Right now the only
+  thing stopping an unauthenticated flood is your jwtVerify running per-request
+  (costs you Worker invocations). Put a Cloudflare Access self-hosted 
+  application in front of the route so unauthenticated requests are rejected at
+  the edge before they ever hit the Worker. The ACCESS_AUD is configured, so the
+  app likely exists — verify the policy is Allow only for your allowlist and
+  the path covers the Worker route.
+  2. WAF managed rules + rate-limiting rule on the hostname (e.g. 50 req/min per
+  IP, challenge over). Edge-side, free tier covers basic.
+  3. Bot Fight Mode / "Block AI Scrapers and Crawlers" — Cloudflare has a
+  one-toggle setting (Security → Bots) that blocks known AI crawler user-agents.
+  Turn it on. Also enable the managed robots.txt / AI Audit "block AI bots"
+  toggle.
+  4. robots.txt is advisory only — the toggle above is what enforces it.
+
+  My recommendation
+
+  Add the body-size cap (#1) — that's the one genuine code gap. Everything else
+  is dashboard toggles you flip once. The app-layer prompt-injection prompt is
+  the only thing I'd call out as misleading; the structural CSS sanitization is
+  sound.
+
+  Want me to add the body-size limit + a test, and write out the exact
+  Cloudflare dashboard checklist? Or should I verify whether the Access
+  application is actually fronting the Worker first?
+
+  skipped: global per-user rate limit (#3) and edge toggles — add #3 when the
+  allowlist outgrows trusted users; toggles are yours to flip.
+
+✻ Sautéed for 40s
+
+❯ add the body-size limit and write the dashboard checklist step by step        
+
+⏺ Update(src/index.ts)
+  ⎿  Added 8 lines
+      24    }
+      25  }
+      26  
+      27 +// Cap request bodies so an allowlisted-but-misbehaving client 
+         +can't buffer us                                                
+      28 +// out of memory. content-length is enough: Workers rejects mis
+         +matched bodies.                                                
+      29 +const MAX_BODY = 64 * 1024; // ponytail: blanket cap; raise per
+         +-route if a real payload needs it                              
+      30 +const checkBodySize = (req: Request) => {                      
+      31 +  if (+(req.headers.get("content-length") ?? 0) > MAX_BODY)    
+      32 +    throw new HttpError(413, "payload too large");             
+      33 +};                                                             
+      34 +                                                               
+      35  const json = (data: unknown, status = 200) =>
+      36    new Response(JSON.stringify(data), {
+      37      status,
+
+⏺ Update(src/index.ts)
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(src/index.ts)
+  ⎿  Added 1 line
+      300      if (req.method === "OPTIONS") return withCors(new Response
+           (null, { status: 204 }));
+      301      const url = new URL(req.url);
+      302      try {
+      303 +      checkBodySize(req);                                     
+      304        const vars = await authenticate(req, env);
+      305        for (const r of routes) {
+      306          if (r.method !== req.method) continue;
+
+⏺ Now a test. Let me check the existing test setup.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(src/index.test.ts)
+  ⎿  Added 11 lines
+       85    });
+       86  });
+       87  
+       88 +describe("body size limit", () => {                           
+       89 +  it("rejects an oversized body with 413", async () => {      
+       90 +    const res = await exports.default.fetch("https://x/edits",
+          + {                                                            
+       91 +      method: "POST",                                         
+       92 +      headers: { ...auth(), "content-length": String(64 * 1024
+          + + 1) },                                                      
+       93 +      body: JSON.stringify({ diff: "x".repeat(64 * 1024), targ
+          +et_url: "https://a.com" }),                                   
+       94 +    });                                                       
+       95 +    expect(res.status).toBe(413);                             
+       96 +  });                                                         
+       97 +});                                                           
+       98 +                                                              
+       99  describe("edits CRUD", () => {
+      100    it("create -> get -> list -> update -> delete", async () => 
+           {
+      101      const create = await exports.default.fetch("https://x/edit
+           s", {
+
+⏺ Bash(node_modules/.bin/vitest run 2>&1 | tail -25)
+  ⎿  Caused by: Error: Failed to start the remote proxy session. Error relo
+     ading remote server: The domain "frimmy.johnmemmott.workers.dev" is be
+     hind Cloudflare Access, but no Access Service Token credentials were f
+     … +30 lines (ctrl+o to expand)
+
+⏺ The test failure is an environment issue, not the code: the test pool tries to
+  open a remote proxy session to the AI binding, which sits behind Access, and
+  there's no service token in this non-interactive shell. The same wall any test
+  run here hits — unrelated to my change. Run npm test in your authenticated
+  environment (or set CLOUDFLARE_ACCESS_CLIENT_ID/_SECRET) and the new 413 test
+  will execute.
+
+  Code changes:
+  - server/src/index.ts: checkBodySize() helper + call at the top of the try in
+  fetch, before auth. Rejects any body over 64 KB with 413.
+  - server/src/index.test.ts: one test asserting an oversized POST gets 413.
+
+  ---
+  Cloudflare Dashboard Hardening Checklist
+
+  Do these once in the dashboard. Items 1–2 are the load-bearing ones; the rest
+  are cheap extra layers.
+
+  1. Confirm Cloudflare Access fronts the Worker at the edge
+
+  Right now unauthenticated requests still cost you a Worker invocation (your
+  jwtVerify runs per request). Push rejection to the edge.
+
+  1. Zero Trust dashboard → Access → Applications.
+  2. Find the app whose AUD matches
+  d3806e652e3f20a509d8eca588b660accb22080fd302e84116dfee377db4c3d2 (your
+  ACCESS_AUD). If none exists, Add an application → Self-hosted.
+  3. Application domain: set to the Worker's hostname + path (e.g.
+  frimmy.johnmemmott.workers.dev, path *).
+  4. Policies: one policy, action Allow, rule Emails → your allowlist (the same
+  addresses in the ALLOWED_EMAILS secret). Everything else is implicitly
+  blocked.
+  5. Save. Now unauthenticated traffic is challenged/blocked before it reaches
+  the Worker.
+
+  2. Block AI scrapers and bots
+
+  1. Main Cloudflare dashboard → select your zone → Security → Bots (or Security
+  → Settings).
+  2. Toggle Bot Fight Mode ON (free tier). This blocks known bad bots by
+  behavior + UA.
+  3. Find Block AI bots / "Block AI Scrapers and Crawlers" and set it to Block
+  (covers GPTBot, ClaudeBot, CCBot, etc. — enforced, unlike robots.txt).
+  4. Optional: AI Audit tab to see which AI crawlers have hit the zone.
+
+  3. Rate limiting at the edge
+
+  Backstop your per-user RL binding with a per-IP edge limit.
+  1. Security → WAF → Rate limiting rules → Create rule.
+  2. If incoming requests match: Hostname equals your Worker host (optionally
+  path /ai/*).
+  3. Rate: e.g. 50 requests per 1 minute, Per: IP.
+  4. Action: Block (or Managed Challenge), duration 1 min. Deploy.
+
+  4. WAF managed rules
+
+  1. Security → WAF → Managed rules.
+  2. Enable Cloudflare Managed Ruleset (and OWASP Core if available on your
+  plan). Default sensitivity is fine.
+
+  5. Lock CORS realism (optional)
+
+  Your Worker sends access-control-allow-origin: *. That's safe because you auth
+  via header, not cookies — but if you ever want fewer probes, you can leave
+  it. No action needed unless you switch to cookie auth.
+
+  6. robots.txt (advisory only)
+
+  Not enforcement — item 2 is. Skip unless you want polite crawlers to
+  self-exclude; the Worker has no static route for it anyway.
+
+  ---
+  skipped: per-user global rate limit in code, and robots.txt — add the first
+  when your allowlist grows past trusted users; the second is moot since #2
+  enforces at the edge.
+
+✻ Brewed for 1m 4s

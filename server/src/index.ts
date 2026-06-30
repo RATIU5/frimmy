@@ -24,6 +24,14 @@ class HttpError extends Error {
 	}
 }
 
+// Cap request bodies so an allowlisted-but-misbehaving client can't buffer us
+// out of memory. content-length is enough: Workers rejects mismatched bodies.
+const MAX_BODY = 64 * 1024; // ponytail: blanket cap; raise per-route if a real payload needs it
+const checkBodySize = (req: Request) => {
+	if (+(req.headers.get("content-length") ?? 0) > MAX_BODY)
+		throw new HttpError(413, "payload too large");
+};
+
 const json = (data: unknown, status = 200) =>
 	new Response(JSON.stringify(data), {
 		status,
@@ -71,8 +79,6 @@ async function authenticate(req: Request, env: CloudflareBindings): Promise<Vars
 	}
 	if (!ident) throw new HttpError(401, "no identity in token");
 
-	// ponytail: dev-only — prints the token identity so you know what to allowlist. Remove before prod.
-	console.log("frimmy identity:", ident, "| allowed:", env.ALLOWED_EMAILS);
 	if (
 		!(env.ALLOWED_EMAILS ?? "")
 			.split(",")
@@ -155,9 +161,10 @@ async function aiEdit(c: Req) {
 	}
 	const raw = (out as { declarations?: unknown })?.declarations;
 	if (typeof raw !== "string") throw new HttpError(502, "AI returned no css");
-	// Belt-and-braces: if the model ignored instructions and wrapped its own
-	// `sel { ... }`, keep just the inner block so the wrap below stays valid.
-	const declarations = raw.match(/\{([^}]*)\}/)?.[1] ?? raw;
+	// If the model wrapped its own `sel { ... }`, keep just the inner block; then
+	// strip ALL braces so the declarations can't break out of the rule we wrap
+	// them in (a `}` in the body would otherwise inject arbitrary new rules).
+	const declarations = (raw.match(/\{([^}]*)\}/)?.[1] ?? raw).replace(/[{}]/g, "");
 	// Wrap with the caller's selector -> always a valid, applicable rule.
 	const css = `${selector} { ${declarations.trim()} }`;
 	return json({ css });
@@ -293,6 +300,7 @@ export default {
 		if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
 		const url = new URL(req.url);
 		try {
+			checkBodySize(req);
 			const vars = await authenticate(req, env);
 			for (const r of routes) {
 				if (r.method !== req.method) continue;
