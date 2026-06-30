@@ -1,11 +1,13 @@
 # Frimmy
 
+Point at any element on a web page, describe the change in plain English, and watch the CSS rewrite itself. Share a URL and anyone can see your edits live on the same page.
+
 https://github.com/user-attachments/assets/ad5267e1-3a91-42f1-9602-b91b2dc621c7
 
 > [!NOTE]
-> This project was created within 6 hours from idea to working prototype as a test to see how fast I can get a project up and running, with the assistance of AI (Claude Code). All chat history has been recorded.
+> This project was created within 6 hours from idea to working prototype as a test to see how fast I can get a project up and running, with the assistance of AI (Claude Code). All chat history with the AI has been recorded.
 
-A browser extension that allows a user to select a part of a web page and modify it's CSS using natural language. Users can then share their edits with other users by sharing a unique URL so they can visualize their edits.
+Built on a WXT browser extension talking to a Cloudflare Worker (D1 + KV, gated by Access) — natural-language CSS editing, persisted and shareable by link.
 
 ## Setup
 
@@ -59,17 +61,11 @@ Per-package details: [`extension/README.md`](extension/README.md),
 [`server/README.md`](server/README.md). Secrets (e.g. Access service token) go
 in `server/.dev.vars` locally — see the server README.
 
-## Process
+## Timeline
 
-I am giving myself 6 hours to see how far I can take this project. Everything will be documented, including my AI history and timestamps via git commits.
+Idea to working prototype in 6 hours, AI-assisted (Claude Code), full chat history and commit timestamps recorded.
 
-After 6 hours, I will submit a PR with all my work. After that I will make updates as needed.
-
-## Progress
-
-Breaks have been taken throughout, but time was tracked on a timer.
-
-- [19:30 MT 2026-06-29] Start project, initialize WXT project template, write markdown files
-- [21:45 MT 2026-06-29] Setup basic server and setup cloudflare project & workers
-- [07:30 MT 2026-06-30] Basic hono server MVP completed
-- [10:30 MT 2026-06-30] Prototype is working
+- `19:30 · 2026-06-29` — Project start: WXT template, scaffolding, design notes
+- `21:45 · 2026-06-29` — Cloudflare project + Worker wired up
+- `07:30 · 2026-06-30` — Hono server MVP
+- `10:30 · 2026-06-30` — Working prototype
