@@ -62,6 +62,9 @@ After 6 hours, I will submit a PR with all my work. After that I will make updat
 
 ## Progress
 
+Breaks have been taken throughout, but time was tracked on a timer.
+
 - [19:30 MT 2026-06-29] Start project, initialize WXT project template, write markdown files
 - [21:45 MT 2026-06-29] Setup basic server and setup cloudflare project & workers
 - [07:30 MT 2026-06-30] Basic hono server MVP completed
+- [10:30 MT 2026-06-30] Prototype is working
