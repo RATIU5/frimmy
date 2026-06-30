@@ -4,13 +4,16 @@
   "license": "MIT",
   "workspaces": {
     "packages": [
-      "docs",
+      "extension",
       "server"
     ]
   },
   "type": "module",
   "scripts": {
-    "dev": ""
+    "dev": "bun run --elide-lines 0 --filter '*' dev"
   },
-  "packageManager": "bun@1.3.10"
+  "packageManager": "bun@1.3.10",
+  "overrides": {
+    "@vitejs/plugin-react": "4"
+  }
 }
