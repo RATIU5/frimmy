@@ -338,11 +338,9 @@ export default function App({ host }: { host: string }) {
 				</div>
 			)}
 			<div className="frimmy-log" ref={logRef}>
-				{messages.length === 0 && !busy && (
-					<div className="frimmy-msg assistant">
-						Hey, I'm Frimmy! Select an element and describe your changes.
-					</div>
-				)}
+				<div className="frimmy-msg assistant">
+					Hey, I'm Frimmy! Select an element and describe your changes.
+				</div>
 				{messages.map((m, i) => (
 					<div
 						key={i}
