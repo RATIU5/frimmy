@@ -4,27 +4,26 @@ A browser extension that allows a user to select a part of a web page and modify
 
 ## Setup
 
-Bun workspace monorepo: `extension/` (WXT browser extension) + `server/`
-(Cloudflare Worker). Assumes the Cloudflare resources (D1, KV, Access) already
-exist on the account — their ids are committed in `server/wrangler.jsonc`.
+Workspace monorepo: `extension/` (WXT browser extension) + `server/`
+(Cloudflare Worker). Works with any Node package manager — `npm`, `pnpm`,
+`yarn`, or `bun` (Node >= 18). Examples below use `npm`; substitute your own.
+Assumes the Cloudflare resources (D1, KV, Access) already exist on the account
+— their ids are committed in `server/wrangler.jsonc`.
 
 ```sh
-# 1. Install Bun (>= 1.3) — https://bun.sh
-curl -fsSL https://bun.sh/install | bash
-
-# 2. Clone + install all workspaces from the repo root
+# 1. Clone + install all workspaces from the repo root
 git clone <repo-url> frimmy && cd frimmy
-bun install                          # installs extension + server deps
+npm install                          # or: pnpm install / yarn / bun install
 
-# 3. Authenticate Wrangler with your Cloudflare account
+# 2. Authenticate Wrangler with your Cloudflare account
 cd server
-bunx wrangler login
-bun run cf-typegen                    # generate binding types
-bunx wrangler d1 migrations apply frimmy --local   # seed local dev DB
+npx wrangler login
+npm run cf-typegen                    # generate binding types
+npx wrangler d1 migrations apply frimmy --local   # seed local dev DB
 
 # 4. Setup extension project
 # If you a chromium browser other than Chrome (I use Arc), you'll need to set add the following file:
-cd extension
+cd ../extension
 cat > web-ext.config.ts <<'EOF'
 import { defineWebExtConfig } from 'wxt';
 
@@ -40,14 +39,15 @@ EOF
 Run everything (both dev servers) from the repo root:
 
 ```sh
-bun run dev          # extension (WXT) + server (Worker) together
+npm run dev          # extension (WXT) + server (Worker) together, via concurrently
 ```
 
 Or individually:
 
 ```sh
-bun run --filter frimmy-server dev       # Worker at http://localhost:8787
-bun run --filter frimmy-extension dev    # WXT dev browser
+npm run dev -w frimmy-server       # Worker at http://localhost:8787
+npm run dev -w frimmy-extension    # WXT dev browser
+# pnpm:  pnpm --filter frimmy-server dev   |  bun: bun run --filter frimmy-server dev
 ```
 
 Per-package details: [`extension/README.md`](extension/README.md),
