@@ -118,6 +118,10 @@ export default defineBackground(() => {
       );
       return true;
     }
+    if (msg?.type === 'delete-edit') {
+      handle(api(`/edits/${encodeURIComponent(msg.id)}`, undefined, 'DELETE'), sendResponse);
+      return true;
+    }
     if (msg?.type === 'update-edit') {
       handle(
         api(

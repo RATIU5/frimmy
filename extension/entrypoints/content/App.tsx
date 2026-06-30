@@ -245,10 +245,22 @@ export default function App({ host }: { host: string }) {
 
 	function clear() {
 		// Wipe everything for this URL: in-memory state, the applied CSS, the
-		// server record, and the local auto-banner index.
+		// per-URL working state, and the local auto-banner index.
 		setEdits({});
 		setMessages([]);
 		browser.runtime.sendMessage({ type: "clear-state", url: stateUrl });
+		// Also delete the shared snapshot (D1 + KV blob) this panel is bound to,
+		// then drop ?frimmy= from the URL so a reload starts clean instead of
+		// re-loading a now-deleted id. Ignore 404s (not owned / already gone).
+		if (sessionId) {
+			browser.runtime.sendMessage({ type: "delete-edit", id: sessionId });
+			setSessionId(null);
+		}
+		const u = new URL(location.href);
+		if (u.searchParams.has("frimmy")) {
+			u.searchParams.delete("frimmy");
+			history.replaceState(null, "", u.toString());
+		}
 	}
 
 	return (
