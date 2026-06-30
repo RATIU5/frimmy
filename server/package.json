@@ -2,20 +2,21 @@
   "name": "frimmy-server",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "$npm_execpath run build && vite preview",
-    "deploy": "$npm_execpath run build && wrangler deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "test": "vitest run"
   },
   "dependencies": {
     "hono": "^4.12.27",
     "jose": "^6.2.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.2.3",
+    "@cloudflare/vitest-pool-workers": "^0.16.20",
+    "@vitest/runner": "^4",
     "vite": "^6.3.5",
-    "vite-ssr-components": "^0.6.1",
+    "vitest": "^4",
     "wrangler": "^4.105.0"
   }
 }
