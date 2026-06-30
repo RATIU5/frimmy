@@ -152,3 +152,23 @@ describe("edits CRUD", () => {
 		expect(res.status).toBe(400);
 	});
 });
+
+describe("ai/edit CSS injection", () => {
+	it("strips braces so AI output can't break out of the wrapped rule", async () => {
+		// Model emits a breakout payload: a `}` that would close our rule early and
+		// inject a new `body{...}` rule against the whole page.
+		vi.spyOn(env.AI as { run: (...a: unknown[]) => unknown }, "run").mockResolvedValue({
+			response: { declarations: "color:red} body{display:none" },
+		});
+		const res = await exports.default.fetch("https://x/ai/edit", {
+			method: "POST",
+			headers: auth(),
+			body: JSON.stringify({ prompt: "make it red", selector: "#a" }),
+		});
+		const { css } = await res.json<{ css: string }>();
+		// Exactly one rule: one `{`, one `}` -> the `}` can't close our rule early
+		// to inject a foreign one. Any leftover text is inert inside the block.
+		expect(css.match(/\{/g)?.length).toBe(1);
+		expect(css.match(/\}/g)?.length).toBe(1);
+	});
+});
