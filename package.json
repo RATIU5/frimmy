@@ -8,9 +8,9 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n ext,server -c blue,green \"cd extension && wxt\" \"cd server && wrangler dev\"",
-    "dev:ext": "cd extension && wxt",
-    "dev:server": "cd server && wrangler dev"
+    "dev": "concurrently -k -n ext,server -c blue,green \"cd extension && node_modules/.bin/wxt\" \"cd server && node_modules/.bin/wrangler dev\"",
+    "dev:ext": "cd extension && node_modules/.bin/wxt",
+    "dev:server": "cd server && node_modules/.bin/wrangler dev"
   },
   "devDependencies": {
     "concurrently": "^9"
