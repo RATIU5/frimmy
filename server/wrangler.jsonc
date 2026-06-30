@@ -40,7 +40,7 @@
 	// ACCESS_TEAM_DOMAIN -> https://<team>.cloudflareaccess.com
 	// ACCESS_AUD         -> the Application Audience (AUD) tag
 	"vars": {
-		"ACCESS_TEAM_DOMAIN": "",
-		"ACCESS_AUD": ""
+		"ACCESS_TEAM_DOMAIN": "https://ratiu5.cloudflareaccess.com",
+		"ACCESS_AUD": "d3806e652e3f20a509d8eca588b660accb22080fd302e84116dfee377db4c3d2"
 	}
 }

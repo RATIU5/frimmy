@@ -18,11 +18,19 @@ authenticated users.
 
 ## Approach
 
-### Auth — OAuth + JWT (stateless)
+### Auth — Cloudflare Access (stateless)
 
-- OAuth (Google/GitHub) → Worker issues a signed JWT (HS256/EdDSA) stored by
-  the extension, sent as `Bearer`.
-- Worker verifies JWT per request; no session store. `sub` = user id.
+- Cloudflare Access sits in front of the Worker's route and handles login
+  (Google/GitHub/OTP) at the edge — no OAuth routes, no JWT signing, no refresh
+  logic in app code.
+- Each request arrives with a `Cf-Access-Jwt-Assertion` header. The Worker
+  verifies it against `<team>.cloudflareaccess.com/cdn-cgi/access/certs` (via
+  `jose`) and reads the user identity from the token. No session store.
+  - `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` configured in `wrangler.jsonc` vars.
+  - User id = the Access identity (`sub` / email claim).
+- Extension auth: a **service token** (`CF-Access-Client-Id` /
+  `CF-Access-Client-Secret`) for the solo stage; switch to `launchWebAuthFlow`
+  against the Access login URL for multi-user.
 - Solo accounts now; `user` row carries a nullable `org_id` for the future org
   layer (don't build org tables yet).
 
@@ -34,11 +42,9 @@ authenticated users.
 
 ### REST surface
 
-All JSON, auth required except the OAuth callback.
+All JSON, auth enforced at the edge by Cloudflare Access (no app auth routes).
 
-- `GET  /auth/login` → OAuth redirect
-- `GET  /auth/callback` → issue JWT
-- `GET  /auth/me`
+- `GET  /auth/me` → identity from the verified Access token
 - `POST /ai/edit` → NL prompt + page context → Workers AI → diff (rate-limited)
 - `POST /edits` → diff→KV, metadata→D1
 - `GET  /edits` → list mine
@@ -57,8 +63,7 @@ All JSON, auth required except the OAuth callback.
 ### Abuse defense
 
 - **Workers AI cost:** rate-limit `POST /ai/edit` per-user via the Workers
-  **Rate Limiting binding** (or D1/KV counter). JWT requirement already gates
-  "who".
+  **Rate Limiting binding** (or D1/KV counter). Access already gates "who".
 - **Scraping:** read endpoints are auth-gated, so no public surface to scrape.
   Cloudflare **Bot Fight Mode + WAF managed rules + AI-crawler blocking** at
   the edge — platform config, ~zero app code.
@@ -69,13 +74,15 @@ All JSON, auth required except the OAuth callback.
 - Org/team tables, roles, invites — solo accounts only for v1 (leave `org_id`
   seam).
 - KV-only manual index keys — D1 handles listing.
-- Turnstile — JWT + rate limiting covers AI abuse; reads aren't public.
+- Turnstile — Access + rate limiting covers AI abuse; reads aren't public.
+- App-managed OAuth / JWT issuing / refresh tokens — handled by Cloudflare
+  Access at the edge.
 - App-level scrape heuristics — Cloudflare edge handles it.
 
 ## Open questions
 
-1. **JWT lifetime / refresh** — short-lived + refresh token, or long-lived
-   token with silent re-auth? (Affects logout/revocation.)
+1. **Extension ↔ Access auth** — service token (solo) vs `launchWebAuthFlow`
+   (multi-user); session lifetime is Access-managed.
 2. **`/ai/edit` page context** — full page HTML to the Worker, or just the
    selected element + prompt? (Payload size + privacy.)
 3. **Diff format** — what does js-element-picker emit, and is the diff a DOM
