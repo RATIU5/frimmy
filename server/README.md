@@ -35,12 +35,66 @@ The Worker verifies the `Cf-Access-Jwt-Assertion` header against
 `<team>.cloudflareaccess.com/cdn-cgi/access/certs` (use `jose`). No login/callback
 routes needed.
 
-## Develop
+## API
+
+All routes require a valid Cloudflare Access JWT in `Cf-Access-Jwt-Assertion`.
+JSON in/out. Errors: `{ "error": { "message": string } }`.
+
+| Method | Path          | Body                              | Notes |
+| ------ | ------------- | --------------------------------- | ----- |
+| GET    | `/auth/me`    | —                                 | verified identity `{id,email}` |
+| POST   | `/ai/edit`    | `{prompt, context?}`              | Workers AI → `{css}`; rate-limited per user (RL binding, 20/60s) |
+| POST   | `/edits`      | `{diff, target_url, title?}`      | KV blob written first, then D1 row → `{id}` (201) |
+| GET    | `/edits`      | —                                 | list mine, newest first |
+| GET    | `/edits/:id`  | —                                 | any authed user can read (shared ids) → metadata + `diff` |
+| PUT    | `/edits/:id`  | `{diff?, target_url?, title?}`    | owner only |
+| DELETE | `/edits/:id`  | —                                 | owner only (204) |
+
+## Develop & test
 
 ```sh
-bun run dev        # http://localhost:8787 — emulates D1, KV, AI
+bun run dev        # http://localhost:8787 — emulates D1, KV; AI hits the real binding
+bun run test       # vitest in the Workers runtime; real D1/KV + real JWT verification
 bun run deploy
 ```
+
+Tests mint a real RS256 JWT and mock only the Access JWKS endpoint, so the
+actual `jwtVerify` path is exercised. **There is no auth bypass in the code** —
+every request must carry a valid Access token, in tests and in production alike.
+
+## Manual API testing (Postman / curl)
+
+`wrangler dev` runs the Worker *without* Cloudflare Access in front of it, so you
+must supply a real Access JWT yourself:
+
+1. Deploy an Access self-hosted app over your prod route (see below), then in a
+   browser log in once at that route. Copy the `CF_Authorization` cookie value —
+   that's the JWT.
+2. Send it as a header to local or prod:
+   ```sh
+   curl https://localhost:8787/auth/me -H "Cf-Access-Jwt-Assertion: <jwt>"
+   ```
+   In Postman: add header `Cf-Access-Jwt-Assertion` = the JWT.
+   - For automated/extension clients, use an Access **service token**
+     (`CF-Access-Client-Id` / `CF-Access-Client-Secret`); Access mints the JWT
+     at the edge for the deployed Worker.
+
+Tokens expire (Access session lifetime) — re-grab when you get a 401.
+
+## Manual Cloudflare dashboard work (one-time)
+
+1. **Deploy first** (`bun run deploy`) so the Worker has a route/hostname.
+2. **Zero Trust → Access → Applications → Add → Self-hosted**: cover the Worker's
+   hostname/path. Add a login method (Google/GitHub/OTP) and an allow policy
+   (e.g. emails ending `@yourdomain` or just your email). Save.
+3. Copy the application's **Audience (AUD) tag** → `ACCESS_AUD` in
+   `wrangler.jsonc`. Confirm `ACCESS_TEAM_DOMAIN` = `https://<team>.cloudflareaccess.com`.
+   Redeploy.
+4. **Service token** (for the extension/Postman): Access → Service Auth → create
+   token; add an Access policy on the app that allows that service token.
+5. **Rate limiting** is the `RL` binding (in code) — no dashboard step.
+6. Later (hardening, per spec §Stage 2): Super Bot Fight Mode with a Skip rule on
+   the API path, and an AI Gateway spend cap. Not needed to start.
 
 Type bindings via the generic:
 
