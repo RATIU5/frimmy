@@ -1,6 +1,9 @@
 # Frimmy
 
-A browser extension that allows a user to select a part of a web page and modify it using natural language. Users can then share their edits with other users by sharing a unique URL so they can visualize their edits.
+> [!NOTE]
+> This project was created within ~6 hours from idea to working prototype as a test to see how fast I can get a project up and running, with the assistance of AI (Claude Code). All chat history has been recorded.
+
+A browser extension that allows a user to select a part of a web page and modify it's CSS using natural language. Users can then share their edits with other users by sharing a unique URL so they can visualize their edits.
 
 ## Setup
 
