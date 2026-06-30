@@ -55,8 +55,13 @@ function applyCss(css: string) {
 	style.textContent = css;
 }
 
+const GREETING: Msg = {
+	role: "assistant",
+	text: "Hey, I'm Frimmy! Select an element and describe your changes.",
+};
+
 export default function App({ host }: { host: string }) {
-	const [messages, setMessages] = useState<Msg[]>([]);
+	const [messages, setMessages] = useState<Msg[]>([GREETING]);
 	const [input, setInput] = useState("");
 	const [selected, setSelected] = useState<{
 		selector: string;
@@ -120,7 +125,8 @@ export default function App({ host }: { host: string }) {
 				}
 			}
 
-			setMessages(msgs);
+			// Greeting is always the first message; drop any persisted copy to avoid dupes.
+			setMessages([GREETING, ...msgs.filter((m) => m.text !== GREETING.text)]);
 			setEdits(eds);
 			loaded.current = true;
 		})();
@@ -130,7 +136,7 @@ export default function App({ host }: { host: string }) {
 	useEffect(() => {
 		applyCss(Object.values(edits).join("\n\n"));
 		// Skip the empty case so Clear's delete isn't immediately re-saved.
-		if (loaded.current && (messages.length || Object.keys(edits).length)) {
+		if (loaded.current && (messages.length > 1 || Object.keys(edits).length)) {
 			browser.runtime.sendMessage({
 				type: "save-state",
 				url: stateUrl,
@@ -294,7 +300,7 @@ export default function App({ host }: { host: string }) {
 		// Wipe everything for this URL: in-memory state, the applied CSS, the
 		// per-URL working state, and the local auto-banner index.
 		setEdits({});
-		setMessages([]);
+		setMessages([GREETING]);
 		browser.runtime.sendMessage({ type: "clear-state", url: stateUrl });
 		// Also delete the shared snapshot (D1 + KV blob) this panel is bound to,
 		// then drop ?frimmy= from the URL so a reload starts clean instead of
@@ -338,9 +344,6 @@ export default function App({ host }: { host: string }) {
 				</div>
 			)}
 			<div className="frimmy-log" ref={logRef}>
-				<div className="frimmy-msg assistant">
-					Hey, I'm Frimmy! Select an element and describe your changes.
-				</div>
 				{messages.map((m, i) => (
 					<div
 						key={i}
@@ -384,7 +387,7 @@ export default function App({ host }: { host: string }) {
 				<button
 					className="frimmy-ghost"
 					onClick={clear}
-					disabled={busy || (!messages.length && !Object.keys(edits).length)}
+					disabled={busy || (messages.length <= 1 && !Object.keys(edits).length)}
 				>
 					Clear
 				</button>
