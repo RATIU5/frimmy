@@ -85,6 +85,17 @@ describe("auth", () => {
 	});
 });
 
+describe("body size limit", () => {
+	it("rejects an oversized body with 413", async () => {
+		const res = await exports.default.fetch("https://x/edits", {
+			method: "POST",
+			headers: { ...auth(), "content-length": String(64 * 1024 + 1) },
+			body: JSON.stringify({ diff: "x".repeat(64 * 1024), target_url: "https://a.com" }),
+		});
+		expect(res.status).toBe(413);
+	});
+});
+
 describe("edits CRUD", () => {
 	it("create -> get -> list -> update -> delete", async () => {
 		const create = await exports.default.fetch("https://x/edits", {

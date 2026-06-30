@@ -24,6 +24,14 @@ class HttpError extends Error {
 	}
 }
 
+// Cap request bodies so an allowlisted-but-misbehaving client can't buffer us
+// out of memory. content-length is enough: Workers rejects mismatched bodies.
+const MAX_BODY = 64 * 1024; // ponytail: blanket cap; raise per-route if a real payload needs it
+const checkBodySize = (req: Request) => {
+	if (+(req.headers.get("content-length") ?? 0) > MAX_BODY)
+		throw new HttpError(413, "payload too large");
+};
+
 const json = (data: unknown, status = 200) =>
 	new Response(JSON.stringify(data), {
 		status,
@@ -292,6 +300,7 @@ export default {
 		if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
 		const url = new URL(req.url);
 		try {
+			checkBodySize(req);
 			const vars = await authenticate(req, env);
 			for (const r of routes) {
 				if (r.method !== req.method) continue;
